@@ -5,16 +5,16 @@ import { BarChart } from "react-native-gifted-charts";
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTransactions } from '../../context/TransactionContext';
 
-// Ekran genişliğini alıp kenar boşluklarını düşüyoruz
 const screenWidth = Dimensions.get('window').width;
 
 export default function ReportsScreen() {
   const { transactions } = useTransactions();
   
-  const [filterType, setFilterType] = useState<'day' | 'week' | 'month' | 'year'>('week');
+  // varsayilan gorunum hafta olarak ayarlandi
+  const [filterType, setFilterType] = useState<'week' | 'month' | 'year'>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // --- TARİH HESAPLAMALARI ---
+  // --- TARIH HESAPLAMALARI ---
   const getStartOfWeek = (date: Date) => {
     const d = new Date(date);
     const day = d.getDay();
@@ -36,9 +36,6 @@ export default function ReportsScreen() {
     const val = direction === 'next' ? 1 : -1;
 
     switch (filterType) {
-      case 'day':
-        newDate.setDate(newDate.getDate() + val);
-        break;
       case 'week':
         newDate.setDate(newDate.getDate() + (val * 7));
         break;
@@ -52,21 +49,19 @@ export default function ReportsScreen() {
     setCurrentDate(newDate);
   };
 
-  // --- VERİ FİLTRELEME ---
+  // --- VERI FILTRELEME ---
   const filteredTransactions = useMemo(() => {
     const d = new Date(currentDate);
     let start, end;
 
-    if (filterType === 'day') {
-      start = new Date(d.setHours(0,0,0,0));
-      end = new Date(d.setHours(23,59,59,999));
-    } else if (filterType === 'week') {
+    if (filterType === 'week') {
       start = getStartOfWeek(d);
       end = getEndOfWeek(d);
     } else if (filterType === 'month') {
       start = new Date(d.getFullYear(), d.getMonth(), 1);
       end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
     } else {
+      // yil
       start = new Date(d.getFullYear(), 0, 1);
       end = new Date(d.getFullYear(), 11, 31, 23, 59, 59, 999);
     }
@@ -77,47 +72,73 @@ export default function ReportsScreen() {
     });
   }, [transactions, currentDate, filterType]);
 
-  // --- GRAFİK VERİSİ HAZIRLAMA ---
-  const chartData = useMemo(() => {
+  // --- Y EKSENI ICIN TEMIZ SAYI HESAPLAMA ---
+  const calculateNiceMaxValue = (max: number) => {
+    if (max <= 0) return 100;
+    const power = Math.floor(Math.log10(max));
+    const magnitude = Math.pow(10, power);
+    const normalized = max / magnitude;
+    let niceNormalized;
+    if (normalized <= 1) niceNormalized = 1;
+    else if (normalized <= 2) niceNormalized = 2;
+    else if (normalized <= 5) niceNormalized = 5;
+    else niceNormalized = 10;
+    return niceNormalized * magnitude;
+  };
+
+  // --- GRAFIK VERISI HAZIRLAMA ---
+  const { chartData, maxValue, barWidth, chartSpacing } = useMemo(() => {
     const data: any[] = [];
+    let max = 0;
+
+    // referans gorseldeki renkler (yesil ve mavi/mor)
+    const COLOR_INCOME = '#6EE7B7'; // soft yesil (mint)
+    const COLOR_EXPENSE = '#A5B4FC'; // soft mavi/mor (indigo)
+    const BORDER_RADIUS = 10; // uclari tam yuvarlak yapmak icin yuksek deger
+
+    // grafik ayarlari
+    let _barWidth = 14;
+    let _groupSpacing = 32; 
     
-    // Çubuk Kalınlığı ve Boşluk Ayarları
-    // Bu değerler grafiğin sıkışmamasını sağlar
-    const BAR_SPACING_INNER = 4; // Gelir ve Gider arasındaki boşluk
-    const BAR_SPACING_OUTER = 24; // Günler arasındaki boşluk
+    if (filterType === 'week') {
+      _barWidth = 16; 
+      _groupSpacing = 30; 
+    } else if (filterType === 'month') {
+      _barWidth = 8;
+      _groupSpacing = 16;
+    } else if (filterType === 'year') {
+      _barWidth = 12;
+      _groupSpacing = 24;
+    }
 
     const pushGroup = (label: string, income: number, expense: number) => {
-      // 1. Çubuk: GELİR (Yeşil)
+      if (income > max) max = income;
+      if (expense > max) max = expense;
+
+      // GELIR CUBUGU
       data.push({
         value: income,
-        label: label, // Etiketi sadece ilk çubuğa (gelir) ekliyoruz
-        frontColor: '#10B981',
-        spacing: BAR_SPACING_INNER,
-        labelTextStyle: { color: '#6B7280', fontSize: 11, width: 60, textAlign: 'center', marginLeft: 8 }, // Etiketi ortalamak için ince ayar
-        borderTopLeftRadius: 4,
-        borderTopRightRadius: 4,
+        label: label,
+        frontColor: COLOR_INCOME,
+        spacing: 8, // gelir ile gider arasindaki bosluk
+        // etiketlerin kesilmemesi icin width ve textalign ayari
+        labelTextStyle: { color: '#9CA3AF', fontSize: 11, fontWeight: '600', width: 60, textAlign: 'center', marginLeft: -10 }, 
+        borderTopLeftRadius: BORDER_RADIUS,
+        borderTopRightRadius: BORDER_RADIUS,
       });
 
-      // 2. Çubuk: GİDER (Kırmızı)
+      // GIDER CUBUGU
       data.push({
         value: expense,
-        frontColor: '#EF4444',
-        spacing: BAR_SPACING_OUTER,
-        borderTopLeftRadius: 4,
-        borderTopRightRadius: 4,
+        frontColor: COLOR_EXPENSE,
+        spacing: _groupSpacing, // bir sonraki gruba gecis boslugu
+        borderTopLeftRadius: BORDER_RADIUS,
+        borderTopRightRadius: BORDER_RADIUS,
       });
     };
 
-    if (filterType === 'day') {
-      const income = filteredTransactions.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
-      const expense = filteredTransactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
-      // Günlük görünümde tek büyük çubuklar olsun
-      data.push({ value: income, label: 'Gelir', frontColor: '#10B981', spacing: 20, barWidth: 40, borderTopLeftRadius: 6, borderTopRightRadius: 6 });
-      data.push({ value: expense, label: 'Gider', frontColor: '#EF4444', barWidth: 40, borderTopLeftRadius: 6, borderTopRightRadius: 6 });
-
-    } else if (filterType === 'week') {
-      const days = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
-      
+    if (filterType === 'week') {
+      const days = ['PZT', 'SAL', 'ÇAR', 'PER', 'CUM', 'CMT', 'PAZ'];
       days.forEach((day, index) => {
         const dayIncome = filteredTransactions.filter(t => {
           const tDate = new Date(t.date);
@@ -138,55 +159,57 @@ export default function ReportsScreen() {
 
     } else if (filterType === 'month') {
       const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
-      
       for (let i = 1; i <= daysInMonth; i++) {
-        const dayIncome = filteredTransactions.filter(t => {
-          return new Date(t.date).getDate() === i && t.type === 'income';
-        }).reduce((a, b) => a + b.amount, 0);
-
-        const dayExpense = filteredTransactions.filter(t => {
-          return new Date(t.date).getDate() === i && t.type === 'expense';
-        }).reduce((a, b) => a + b.amount, 0);
-
-        // Ay görünümünde etiketleri seyrelt (1, 5, 10...)
-        const label = i === 1 || i % 5 === 0 ? i.toString() : '';
+        const dayIncome = filteredTransactions.filter(t => new Date(t.date).getDate() === i && t.type === 'income').reduce((a, b) => a + b.amount, 0);
+        const dayExpense = filteredTransactions.filter(t => new Date(t.date).getDate() === i && t.type === 'expense').reduce((a, b) => a + b.amount, 0);
+        
+        // etiketleri seyrelt (sadece 5 ve katlari)
+        const label = (i === 1 || i % 5 === 0) ? i.toString() : '';
         pushGroup(label, dayIncome, dayExpense);
       }
 
     } else if (filterType === 'year') {
-      const months = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
-      
+      const months = ['OCA', 'ŞUB', 'MAR', 'NIS', 'MAY', 'HAZ', 'TEM', 'AĞU', 'EYL', 'EKI', 'KAS', 'ARA'];
       months.forEach((month, index) => {
-        const monthIncome = filteredTransactions.filter(t => {
-          return new Date(t.date).getMonth() === index && t.type === 'income';
-        }).reduce((a, b) => a + b.amount, 0);
-
-        const monthExpense = filteredTransactions.filter(t => {
-          return new Date(t.date).getMonth() === index && t.type === 'expense';
-        }).reduce((a, b) => a + b.amount, 0);
-
+        const monthIncome = filteredTransactions.filter(t => new Date(t.date).getMonth() === index && t.type === 'income').reduce((a, b) => a + b.amount, 0);
+        const monthExpense = filteredTransactions.filter(t => new Date(t.date).getMonth() === index && t.type === 'expense').reduce((a, b) => a + b.amount, 0);
         pushGroup(month, monthIncome, monthExpense);
       });
     }
 
-    // Veri yoksa boş grafik düzgün görünsün
-    if (data.length === 0) return [{ value: 0, label: '', spacing: 20 }];
+    let niceMax = calculateNiceMaxValue(max);
+    if (niceMax < max) niceMax = niceMax * 1.2; 
+    if (niceMax === 0) niceMax = 100;
 
-    return data;
+    return { chartData: data, maxValue: niceMax, barWidth: _barWidth, chartSpacing: _groupSpacing };
   }, [filteredTransactions, filterType, currentDate]);
 
-  // --- İSTATİSTİKLER ---
+  // --- ISTATISTIK & TESPITLER ---
   const stats = useMemo(() => {
     const income = filteredTransactions.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
     const expense = filteredTransactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
-    return { income, expense, balance: income - expense };
+    
+    // en yuksek harcama yapilan kategori
+    const catTotals: Record<string, number> = {};
+    filteredTransactions.filter(t => t.type === 'expense').forEach(t => {
+      catTotals[t.title] = (catTotals[t.title] || 0) + t.amount;
+    });
+    
+    const topCategory = Object.entries(catTotals).sort((a,b) => b[1] - a[1])[0];
+
+    return { 
+      income, 
+      expense, 
+      balance: income - expense,
+      topCatName: topCategory ? topCategory[0] : 'Yok',
+      topCatAmount: topCategory ? topCategory[1] : 0
+    };
   }, [filteredTransactions]);
 
+  // basliktaki tarih yazisi
   const dateLabel = useMemo(() => {
     const trLocale = 'tr-TR';
-    if (filterType === 'day') {
-      return currentDate.toLocaleDateString(trLocale, { day: 'numeric', month: 'long', year: 'numeric' });
-    } else if (filterType === 'week') {
+    if (filterType === 'week') {
       const start = getStartOfWeek(currentDate);
       const end = getEndOfWeek(currentDate);
       return `${start.getDate()} - ${end.toLocaleDateString(trLocale, { day: 'numeric', month: 'long' })}`;
@@ -198,144 +221,144 @@ export default function ReportsScreen() {
   }, [currentDate, filterType]);
 
   const formatMoney = (amount: number) => {
-    return amount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY' });
+    return amount.toLocaleString('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: 0 });
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
         
-        {/* HEADER */}
+        {/* BASLIK */}
         <View style={styles.header}>
-            <Text style={styles.headerTitle}>Raporlar</Text>
+            <Text style={styles.headerTitle}>Haftalık Harcama Analizi</Text>
         </View>
 
-        {/* FİLTRE BUTONLARI */}
-        <View style={styles.filterContainer}>
-            {['day', 'week', 'month', 'year'].map((type) => (
-                <TouchableOpacity 
-                    key={type}
-                    style={[styles.filterBtn, filterType === type && styles.activeFilterBtn]}
-                    onPress={() => setFilterType(type as any)}
-                >
-                    <Text style={[styles.filterText, filterType === type && styles.activeFilterText]}>
-                        {type === 'day' ? 'Gün' : type === 'week' ? 'Hafta' : type === 'month' ? 'Ay' : 'Yıl'}
-                    </Text>
+        {/* FILTRE & TARIH KONTROLU */}
+        <View style={styles.controlsRow}>
+            {/* tab switch */}
+            <View style={styles.segmentedControl}>
+                {['week', 'month', 'year'].map((type) => (
+                    <TouchableOpacity 
+                        key={type}
+                        style={[styles.segmentBtn, filterType === type && styles.activeSegmentBtn]}
+                        onPress={() => setFilterType(type as any)}
+                    >
+                        <Text style={[styles.segmentText, filterType === type && styles.activeSegmentText]}>
+                            {type === 'week' ? 'Hafta' : type === 'month' ? 'Ay' : 'Yıl'}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+
+            {/* tarih oklari */}
+            <View style={styles.dateControl}>
+                <TouchableOpacity onPress={() => handleNavigate('prev')}>
+                    <Ionicons name="chevron-back" size={20} color="#6B7280" />
                 </TouchableOpacity>
-            ))}
-        </View>
-
-        {/* TARİH GEZİNME */}
-        <View style={styles.navRow}>
-            <TouchableOpacity onPress={() => handleNavigate('prev')} style={styles.navBtn}>
-                <Ionicons name="chevron-back" size={20} color="#4B5563" />
-            </TouchableOpacity>
-            
-            <Text style={styles.dateLabel}>{dateLabel}</Text>
-            
-            <TouchableOpacity onPress={() => handleNavigate('next')} style={styles.navBtn}>
-                <Ionicons name="chevron-forward" size={20} color="#4B5563" />
-            </TouchableOpacity>
-        </View>
-
-        {/* ÖZET KARTLAR */}
-        <View style={styles.statsGrid}>
-            <View style={[styles.statCard, { backgroundColor: '#DCFCE7' }]}>
-                <View style={[styles.iconCircle, { backgroundColor: '#10B981' }]}>
-                    <Ionicons name="arrow-down" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.statLabel}>Gelir</Text>
-                <Text style={[styles.statValue, { color: '#047857' }]}>{formatMoney(stats.income)}</Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: '#FEE2E2' }]}>
-                <View style={[styles.iconCircle, { backgroundColor: '#EF4444' }]}>
-                    <Ionicons name="arrow-up" size={16} color="#FFF" />
-                </View>
-                <Text style={styles.statLabel}>Gider</Text>
-                <Text style={[styles.statValue, { color: '#B91C1C' }]}>{formatMoney(stats.expense)}</Text>
+                <Text style={styles.dateText}>{dateLabel}</Text>
+                <TouchableOpacity onPress={() => handleNavigate('next')}>
+                    <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+                </TouchableOpacity>
             </View>
         </View>
 
-        {/* NET DURUM KARTI */}
-        <View style={styles.balanceCard}>
-            <Text style={styles.balanceLabel}>Net Durum</Text>
-            <Text style={[
-                styles.balanceValue, 
-                stats.balance >= 0 ? { color: '#10B981' } : { color: '#EF4444' }
-            ]}>
-                {stats.balance >= 0 ? '+' : ''}{formatMoney(stats.balance)}
-            </Text>
+        {/* OZET KARTLARI (GELIR - GIDER) */}
+        <View style={styles.summaryRow}>
+            {/* gelir karti */}
+            <View style={styles.summaryCard}>
+                <View style={{flexDirection:'row', alignItems:'center', marginBottom: 8}}>
+                    <Ionicons name="arrow-down" size={16} color="#34D399" />
+                    <Text style={[styles.summaryLabel, {color: '#34D399'}]}> GELİR</Text>
+                </View>
+                <Text style={styles.summaryValue}>{formatMoney(stats.income)}</Text>
+                <Text style={styles.summarySub}>Bu hafta</Text>
+            </View>
+
+            {/* gider karti */}
+            <View style={styles.summaryCard}>
+                <View style={{flexDirection:'row', alignItems:'center', marginBottom: 8}}>
+                    <Ionicons name="arrow-up" size={16} color="#F87171" />
+                    <Text style={[styles.summaryLabel, {color: '#F87171'}]}> GİDER</Text>
+                </View>
+                <Text style={styles.summaryValue}>{formatMoney(stats.expense)}</Text>
+                <Text style={styles.summarySub}>Bu hafta</Text>
+            </View>
         </View>
 
-        {/* GRAFİK ALANI */}
-        <View style={styles.chartContainer}>
-            <Text style={styles.sectionTitle}>
-                {filterType === 'year' ? 'Aylık Performans' : filterType === 'month' ? 'Günlük Akış' : 'Karşılaştırma'}
-            </Text>
-            
-            <View style={{ marginTop: 20 }}>
+        {/* BUYUK GRAFIK KARTI */}
+        <View style={styles.chartCard}>
+            <View style={styles.chartHeader}>
+                <Text style={styles.chartTitle}>
+                    {filterType === 'year' ? 'Yıllık Performans' : filterType === 'month' ? 'Aylık Akış' : 'Haftalık Performans'}
+                </Text>
+                
+                {/* legend (gosterge) */}
+                <View style={{flexDirection:'row', gap: 10}}>
+                    <View style={{flexDirection:'row', alignItems:'center'}}>
+                        <View style={[styles.dot, {backgroundColor:'#6EE7B7'}]} />
+                        <Text style={styles.legendText}>Gelir</Text>
+                    </View>
+                    <View style={{flexDirection:'row', alignItems:'center'}}>
+                        <View style={[styles.dot, {backgroundColor:'#A5B4FC'}]} />
+                        <Text style={styles.legendText}>Gider</Text>
+                    </View>
+                </View>
+            </View>
+
+            <View style={{ marginTop: 25 }}>
                 <BarChart
+                    key={`${filterType}-${currentDate.toISOString()}`}
                     data={chartData}
-                    barWidth={18} // Çubukları kalınlaştırdık
-                    initialSpacing={20} // Soldan boşluk
-                    spacing={24} // Varsayılan boşluk
+                    barWidth={barWidth}
+                    initialSpacing={15}
+                    spacing={0} // ic spacing data icinde ayarlandi
+                    maxValue={maxValue}
                     noOfSections={4}
-                    barBorderRadius={4} // Köşeleri yuvarladık
                     yAxisThickness={0}
                     xAxisThickness={0}
-                    hideRules
+                    yAxisTextStyle={{ color: '#9CA3AF', fontSize: 11 }}
+                    hideRules={false}
+                    rulesColor="#F3F4F6"
                     isAnimated
-                    animationDuration={600}
+                    animationDuration={400}
                     height={220}
-                    // Ekran genişliğinden paddingleri düşüyoruz (40px) 
-                    // Ama içerik taşarsa kütüphane otomatik scroll olmasını sağlar
-                    width={screenWidth - 80} 
-                    scrollToEnd={false} // Başa odaklı başlasın
+                    width={screenWidth - 80}
+                    scrollToEnd={false}
                 />
-            </View>
-
-            {/* AÇIKLAMA (LEGEND) */}
-            <View style={styles.legendContainer}>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
-                    <Text style={styles.legendText}>Gelir</Text>
-                </View>
-                <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-                    <Text style={styles.legendText}>Gider</Text>
-                </View>
             </View>
         </View>
 
-        {/* HAREKET LİSTESİ */}
-        <Text style={[styles.sectionTitle, { marginLeft: 20, marginTop: 20 }]}>Dönem Hareketleri</Text>
-        
-        <View style={styles.transactionList}>
-            {filteredTransactions.length > 0 ? (
-                filteredTransactions.slice(0, 10).map((t) => (
-                    <View key={t.id} style={styles.transItem}>
-                         <View style={[styles.transIcon, { backgroundColor: t.type === 'income' ? '#DCFCE7' : '#FEE2E2' }]}>
-                             <Ionicons 
-                                name={t.type === 'income' ? 'wallet' : 'cart'} 
-                                size={18} 
-                                color={t.type === 'income' ? '#16A34A' : '#EF4444'} 
-                             />
-                         </View>
-                         <View style={{flex: 1}}>
-                             <Text style={styles.transTitle}>{t.title}</Text>
-                             <Text style={styles.transDate}>
-                                 {new Date(t.date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}
-                             </Text>
-                         </View>
-                         <Text style={[styles.transAmount, { color: t.type === 'income' ? '#16A34A' : '#EF4444' }]}>
-                             {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}
-                         </Text>
-                    </View>
-                ))
-            ) : (
-                <Text style={{ textAlign: 'center', color: '#9CA3AF', marginTop: 10 }}>Bu dönemde işlem yok.</Text>
-            )}
+        {/* ONEMLI TESPITLER (INSIGHTS) */}
+        <Text style={styles.sectionTitle}>Önemli Tespitler</Text>
+
+        {/* en yuksek harcama karti */}
+        <View style={styles.insightCard}>
+            <View style={[styles.insightIconBox, { backgroundColor: '#FEF3C7' }]}>
+                <Ionicons name="wallet-outline" size={24} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+                <Text style={styles.insightTitle}>En Yüksek Harcama</Text>
+                <Text style={styles.insightDesc}>
+                    {stats.topCatAmount > 0 
+                        ? `Bu dönemde en çok ${stats.topCatName} kategorisine ${formatMoney(stats.topCatAmount)} harcandı.` 
+                        : 'Bu dönemde henüz harcama yok.'}
+                </Text>
+            </View>
+        </View>
+
+        {/* butce durumu karti */}
+        <View style={styles.insightCard}>
+            <View style={[styles.insightIconBox, { backgroundColor: '#DBEAFE' }]}>
+                <Ionicons name="analytics-outline" size={24} color="#2563EB" />
+            </View>
+            <View style={{ flex: 1 }}>
+                <Text style={styles.insightTitle}>Bütçe Durumu</Text>
+                <Text style={styles.insightDesc}>
+                    {stats.balance >= 0 
+                        ? `Tebrikler! Gelirlerin giderlerinden ${formatMoney(stats.balance)} daha fazla.` 
+                        : `Dikkat! Giderlerin gelirlerini ${formatMoney(Math.abs(stats.balance))} aşmış durumda.`}
+                </Text>
+            </View>
         </View>
 
         <View style={{ height: 100 }} />
@@ -345,42 +368,42 @@ export default function ReportsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  header: { paddingHorizontal: 20, paddingVertical: 15 },
-  headerTitle: { fontSize: 24, fontWeight: '700', color: '#1F2937' },
+  container: { flex: 1, backgroundColor: '#F9FAFB' }, // acik gri arka plan
+  header: { paddingHorizontal: 20, paddingTop: 15, paddingBottom: 10 },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: '#111827' },
   
-  filterContainer: { flexDirection: 'row', backgroundColor: '#E5E7EB', marginHorizontal: 20, borderRadius: 12, padding: 4, marginBottom: 15 },
-  filterBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
-  activeFilterBtn: { backgroundColor: '#FFF', shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 2 },
-  filterText: { fontSize: 13, fontWeight: '500', color: '#6B7280' },
-  activeFilterText: { color: '#1F2937', fontWeight: '700' },
-
-  navRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
-  navBtn: { padding: 8, backgroundColor: '#FFF', borderRadius: 10, marginHorizontal: 15, shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 2 },
-  dateLabel: { fontSize: 16, fontWeight: '700', color: '#1F2937', minWidth: 140, textAlign: 'center' },
-
-  statsGrid: { flexDirection: 'row', marginHorizontal: 20, gap: 15, marginBottom: 15 },
-  statCard: { flex: 1, padding: 15, borderRadius: 20, alignItems: 'center' },
-  iconCircle: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
-  statLabel: { fontSize: 12, color: '#4B5563', fontWeight: '600' },
-  statValue: { fontSize: 18, fontWeight: '700', marginTop: 4 },
-
-  balanceCard: { marginHorizontal: 20, backgroundColor: '#FFF', padding: 20, borderRadius: 20, alignItems: 'center', shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 5, marginBottom: 20 },
-  balanceLabel: { fontSize: 14, color: '#9CA3AF', letterSpacing: 1, fontWeight: '600' },
-  balanceValue: { fontSize: 32, fontWeight: '800', marginTop: 5 },
-
-  chartContainer: { backgroundColor: '#FFF', marginHorizontal: 20, borderRadius: 24, padding: 20, shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 10, elevation: 3 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937' },
+  controlsRow: { paddingHorizontal: 20, marginBottom: 20 },
   
-  legendContainer: { flexDirection: 'row', justifyContent: 'center', marginTop: 15, gap: 20 },
-  legendItem: { flexDirection: 'row', alignItems: 'center' },
-  legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
-  legendText: { fontSize: 12, color: '#6B7280', fontWeight: '500' },
+  // segment kontrol stili
+  segmentedControl: { flexDirection: 'row', backgroundColor: '#E5E7EB', borderRadius: 12, padding: 4, marginBottom: 15 },
+  segmentBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  activeSegmentBtn: { backgroundColor: '#FFF', shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 2 },
+  segmentText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
+  activeSegmentText: { color: '#111827' },
 
-  transactionList: { marginHorizontal: 20, marginTop: 10 },
-  transItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 12, borderRadius: 12, marginBottom: 8 },
-  transIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  transTitle: { fontSize: 14, fontWeight: '600', color: '#1F2937' },
-  transDate: { fontSize: 11, color: '#9CA3AF' },
-  transAmount: { fontSize: 14, fontWeight: '700' },
+  // tarih kontrol stili
+  dateControl: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF', padding: 12, borderRadius: 12, shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 5 },
+  dateText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+
+  // ozet kartlari stili
+  summaryRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 15, marginBottom: 20 },
+  summaryCard: { flex: 1, backgroundColor: '#FFF', padding: 20, borderRadius: 20, shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 5, elevation: 2 },
+  summaryLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, marginLeft: 4 },
+  summaryValue: { fontSize: 22, fontWeight: '800', color: '#1F2937', marginVertical: 4 },
+  summarySub: { fontSize: 11, color: '#9CA3AF' },
+
+  // grafik karti stili
+  chartCard: { backgroundColor: '#FFF', marginHorizontal: 20, borderRadius: 24, padding: 24, shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 10, elevation: 3, marginBottom: 25 },
+  chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  chartTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937' },
+  legendText: { fontSize: 11, color: '#6B7280', marginLeft: 6, fontWeight: '500' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#374151', marginLeft: 20, marginBottom: 15 },
+  
+  // tespit kartlari stili
+  insightCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', marginHorizontal: 20, padding: 16, borderRadius: 20, marginBottom: 12, shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 5 },
+  insightIconBox: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  insightTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937', marginBottom: 4 },
+  insightDesc: { fontSize: 13, color: '#6B7280', lineHeight: 18 },
 });
